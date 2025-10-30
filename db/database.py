@@ -46,7 +46,10 @@ class Database:
     # ==================== SESSION OPERATIONS ====================
 
     def create_session(self, location: str, ap_name: str = None,
-                      notes: str = None, sample_interval: float = 4.0) -> int:
+                      notes: str = None, sample_interval: float = 4.0,
+                      iperf3_enabled: bool = False, iperf3_server: str = None,
+                      iperf3_port: int = 5201, iperf3_parallel: int = 1,
+                      iperf3_reverse: bool = False, iperf3_udp: bool = False) -> int:
         """
         Create a new test session
 
@@ -55,15 +58,27 @@ class Database:
             ap_name: Access point name/identifier
             notes: Optional notes about the test
             sample_interval: Sampling interval in seconds
+            iperf3_enabled: Whether iperf3 testing is enabled
+            iperf3_server: iperf3 server IP/hostname
+            iperf3_port: iperf3 server port
+            iperf3_parallel: Number of parallel streams
+            iperf3_reverse: Reverse mode (server sends)
+            iperf3_udp: Use UDP instead of TCP
 
         Returns:
             int: Session ID
         """
         cursor = self.conn.cursor()
         cursor.execute("""
-            INSERT INTO sessions (location, ap_name, notes, start_time, sample_interval_seconds)
-            VALUES (?, ?, ?, ?, ?)
-        """, (location, ap_name, notes, datetime.now(), sample_interval))
+            INSERT INTO sessions (
+                location, ap_name, notes, start_time, sample_interval_seconds,
+                iperf3_enabled, iperf3_server, iperf3_port, iperf3_parallel,
+                iperf3_reverse, iperf3_udp
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (location, ap_name, notes, datetime.now(), sample_interval,
+              iperf3_enabled, iperf3_server, iperf3_port, iperf3_parallel,
+              iperf3_reverse, iperf3_udp))
 
         self.conn.commit()
         return cursor.lastrowid

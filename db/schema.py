@@ -16,6 +16,15 @@ CREATE TABLE IF NOT EXISTS sessions (
     start_time TIMESTAMP NOT NULL,
     end_time TIMESTAMP,
     sample_interval_seconds REAL DEFAULT 4.0,
+
+    -- iperf3 testing parameters
+    iperf3_enabled BOOLEAN DEFAULT 0,
+    iperf3_server TEXT,
+    iperf3_port INTEGER DEFAULT 5201,
+    iperf3_parallel INTEGER DEFAULT 1,
+    iperf3_reverse BOOLEAN DEFAULT 0,
+    iperf3_udp BOOLEAN DEFAULT 0,
+
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

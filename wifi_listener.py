@@ -17,6 +17,7 @@ from datetime import datetime, timedelta
 import config
 from db import Database, init_database
 from collectors import SystemProfilerCollector
+from collectors.iperf3_runner import IPerf3Runner
 from exporters import InfluxDBExporter
 
 
@@ -25,6 +26,7 @@ class WiFiListener:
 
     def __init__(self):
         self.collector = SystemProfilerCollector(timeout=config.SYSTEM_PROFILER_TIMEOUT)
+        self.iperf3_runner = None
         self.db = None
         self.running = False
         self.current_session_id = None
@@ -40,7 +42,10 @@ class WiFiListener:
         sys.exit(0)
 
     def start_session(self, location: str, ap_name: str = None,
-                     notes: str = None, duration_minutes: float = 0):
+                     notes: str = None, duration_minutes: float = 0,
+                     iperf3_server: str = None, iperf3_port: int = 5201,
+                     iperf3_parallel: int = 1, iperf3_reverse: bool = False,
+                     iperf3_udp: bool = False):
         """
         Start a new monitoring session
 
@@ -49,6 +54,11 @@ class WiFiListener:
             ap_name: Access point name/identifier
             notes: Optional notes
             duration_minutes: Auto-stop after this many minutes (0 = manual)
+            iperf3_server: iperf3 server IP/hostname (None = no iperf3)
+            iperf3_port: iperf3 server port (default: 5201)
+            iperf3_parallel: Number of parallel streams (-P flag, default: 1)
+            iperf3_reverse: Reverse mode - server sends to client (-R flag)
+            iperf3_udp: Use UDP instead of TCP (-u flag)
         """
         # Initialize database
         init_database(config.DB_PATH)
@@ -75,13 +85,33 @@ class WiFiListener:
             print("ERROR: Could not collect initial WiFi sample")
             return False
 
+        # Validate iperf3 if requested
+        iperf3_enabled = iperf3_server is not None
+        if iperf3_enabled:
+            # Check if iperf3 is installed
+            if not IPerf3Runner.check_iperf3_installed():
+                print("ERROR: iperf3 not found. Install with: brew install iperf3")
+                return False
+
+            # Test server connectivity
+            print(f"Testing connection to iperf3 server {iperf3_server}:{iperf3_port}...")
+            if not IPerf3Runner.test_server_connection(iperf3_server, iperf3_port):
+                print(f"WARNING: Could not connect to iperf3 server {iperf3_server}:{iperf3_port}")
+                print("Continuing anyway - iperf3 will start when server becomes available")
+
         # Create session
         with Database(config.DB_PATH) as db:
             self.current_session_id = db.create_session(
                 location=location,
                 ap_name=ap_name,
                 notes=notes,
-                sample_interval=config.SAMPLE_INTERVAL_SECONDS
+                sample_interval=config.SAMPLE_INTERVAL_SECONDS,
+                iperf3_enabled=iperf3_enabled,
+                iperf3_server=iperf3_server,
+                iperf3_port=iperf3_port,
+                iperf3_parallel=iperf3_parallel,
+                iperf3_reverse=iperf3_reverse,
+                iperf3_udp=iperf3_udp
             )
 
         print("=" * 80)
@@ -97,9 +127,36 @@ class WiFiListener:
             print(f"Duration: {duration_minutes} minutes (auto-stop)")
         else:
             print("Duration: Manual stop (press Ctrl+C)")
-        print(f"Database: {config.DB_PATH}")
+
+        # Display iperf3 info
+        if iperf3_enabled:
+            print(f"\niperf3 Testing: ENABLED")
+            print(f"  Server: {iperf3_server}:{iperf3_port}")
+            print(f"  Parallel Streams: {iperf3_parallel}")
+            if iperf3_reverse:
+                print(f"  Mode: DOWNLOAD (server → client)")
+            else:
+                print(f"  Mode: UPLOAD (client → server)")
+            if iperf3_udp:
+                print(f"  Protocol: UDP")
+            else:
+                print(f"  Protocol: TCP")
+        else:
+            print(f"\niperf3 Testing: Disabled (passive monitoring)")
+
+        print(f"\nDatabase: {config.DB_PATH}")
         print("=" * 80)
         print()
+
+        # Initialize iperf3 runner if enabled
+        if iperf3_enabled:
+            self.iperf3_runner = IPerf3Runner(
+                server=iperf3_server,
+                port=iperf3_port,
+                parallel=iperf3_parallel,
+                reverse=iperf3_reverse,
+                udp=iperf3_udp
+            )
 
         # Start monitoring loop
         self._run_monitoring_loop(duration_minutes)
@@ -120,6 +177,11 @@ class WiFiListener:
 
         if duration_minutes > 0:
             end_time = start_time + timedelta(minutes=duration_minutes)
+
+        # Start iperf3 if enabled
+        if self.iperf3_runner:
+            duration_seconds = int(duration_minutes * 60) if duration_minutes > 0 else 300
+            self.iperf3_runner.start(duration=duration_seconds)
 
         print("Collecting samples... (press Ctrl+C to stop)")
         print(f"{'Time':<20} {'Signal':>8} {'Noise':>8} {'SNR':>6} {'TX Rate':>10} {'Channel':>8}")
@@ -160,6 +222,10 @@ class WiFiListener:
 
         except KeyboardInterrupt:
             print("\n\nStopping...")
+
+        # Stop iperf3 if running
+        if self.iperf3_runner and self.iperf3_runner.is_running():
+            self.iperf3_runner.stop()
 
         # End session
         with Database(config.DB_PATH) as db:
@@ -230,26 +296,36 @@ class WiFiListener:
             print("No sessions found.")
             return
 
-        print("\n" + "=" * 80)
+        print("\n" + "=" * 90)
         print("Sessions")
-        print("=" * 80)
-        print(f"{'ID':<6} {'Location':<25} {'AP Name':<20} {'Start Time':<20} {'Samples':<8}")
-        print("-" * 80)
+        print("=" * 90)
+        print(f"{'ID':<6} {'Location':<22} {'AP Name':<15} {'iperf3':<12} {'Start Time':<20} {'Samples':<8}")
+        print("-" * 90)
 
         for session in sessions:
             session_id = session['id']
-            location = session['location'][:24]
-            ap_name = (session['ap_name'] or 'N/A')[:19]
+            location = session['location'][:21]
+            ap_name = (session['ap_name'] or 'N/A')[:14]
             start_time = session['start_time'][:19]
 
             # Get sample count
             with Database(config.DB_PATH) as db:
                 sample_count = db.get_sample_count(session_id)
 
-            status = "" if session['end_time'] else " (active)"
-            print(f"{session_id:<6} {location:<25} {ap_name:<20} {start_time:<20} {sample_count:<8}{status}")
+            # Show iperf3 status
+            if session.get('iperf3_enabled'):
+                iperf3_info = f"Yes"
+                if session.get('iperf3_parallel', 1) > 1:
+                    iperf3_info += f"(P{session['iperf3_parallel']})"
+                if session.get('iperf3_reverse'):
+                    iperf3_info += "/R"
+            else:
+                iperf3_info = "No"
 
-        print("=" * 80)
+            status = "" if session['end_time'] else " (active)"
+            print(f"{session_id:<6} {location:<22} {ap_name:<15} {iperf3_info:<12} {start_time:<20} {sample_count:<8}{status}")
+
+        print("=" * 90)
 
     def show_stats(self, session_id: int):
         """
@@ -280,6 +356,18 @@ class WiFiListener:
         print(f"Start Time: {session['start_time']}")
         print(f"End Time: {session['end_time'] or 'In Progress'}")
         print(f"Sample Count: {stats['sample_count']}")
+
+        # Show iperf3 configuration if enabled
+        if session.get('iperf3_enabled'):
+            print(f"\niperf3 Testing: ENABLED")
+            print(f"  Server: {session['iperf3_server']}:{session['iperf3_port']}")
+            print(f"  Parallel Streams: {session['iperf3_parallel']}")
+            mode = "DOWNLOAD (server → client)" if session['iperf3_reverse'] else "UPLOAD (client → server)"
+            print(f"  Mode: {mode}")
+            protocol = "UDP" if session['iperf3_udp'] else "TCP"
+            print(f"  Protocol: {protocol}")
+        else:
+            print(f"\niperf3 Testing: Disabled (passive monitoring)")
         print()
 
         print("Metrics Summary:")
@@ -510,6 +598,18 @@ def main():
                              default=config.DEFAULT_SESSION_DURATION_MINUTES,
                              help='Auto-stop after N minutes (0 = manual stop)')
 
+    # iperf3 options
+    start_parser.add_argument('--iperf3-server',
+                             help='iperf3 server IP/hostname (enables active throughput testing)')
+    start_parser.add_argument('--iperf3-port', type=int, default=5201,
+                             help='iperf3 server port (default: 5201)')
+    start_parser.add_argument('--iperf3-parallel', '-P', type=int, default=1,
+                             help='Number of parallel iperf3 streams (default: 1, recommended: 4)')
+    start_parser.add_argument('--iperf3-reverse', '-R', action='store_true',
+                             help='Reverse mode: server sends to client (download test)')
+    start_parser.add_argument('--iperf3-udp', '-u', action='store_true',
+                             help='Use UDP instead of TCP')
+
     # Stop command
     stop_parser = subparsers.add_parser('stop', help='Stop/close an active session')
     stop_parser.add_argument('session_id', type=int, nargs='?',
@@ -556,7 +656,12 @@ def main():
             location=args.location,
             ap_name=args.ap_name,
             notes=args.notes,
-            duration_minutes=args.duration
+            duration_minutes=args.duration,
+            iperf3_server=args.iperf3_server,
+            iperf3_port=args.iperf3_port,
+            iperf3_parallel=args.iperf3_parallel,
+            iperf3_reverse=args.iperf3_reverse,
+            iperf3_udp=args.iperf3_udp
         )
 
     elif args.command == 'stop':
