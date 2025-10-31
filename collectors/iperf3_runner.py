@@ -148,29 +148,30 @@ class IPerf3Runner:
                     # Parse throughput from interval reports
                     throughput = self.parse_throughput_line(line)
                     if throughput is not None:
-                        interval_values.append(throughput)
+                        # Check if this is an interval line (not sender/receiver summary)
+                        is_interval_line = re.search(r'\d+\.\d+-\d+\.\d+\s+sec', line) and 'sender' not in line.lower() and 'receiver' not in line.lower()
 
-                        # Check if this is an interval summary line (contains time range like "0.00-4.00")
-                        # For parallel streams, look for [SUM] line
-                        is_interval_summary = False
-                        if self.parallel > 1:
-                            # With parallel streams, look for [SUM] line
-                            if '[SUM]' in line and re.search(r'\d+\.\d+-\d+\.\d+\s+sec', line):
-                                is_interval_summary = True
-                        else:
-                            # Single stream, any interval line counts
-                            if re.search(r'\d+\.\d+-\d+\.\d+\s+sec', line) and 'sender' not in line.lower() and 'receiver' not in line.lower():
-                                is_interval_summary = True
-
-                        # When we hit an interval summary, calculate stats and queue them
-                        if is_interval_summary and interval_values:
-                            stats = {
-                                'min': min(interval_values),
-                                'avg': sum(interval_values) / len(interval_values),
-                                'max': max(interval_values)
-                            }
-                            self.throughput_queue.put(stats)
-                            interval_values = []  # Reset for next interval
+                        if is_interval_line:
+                            # For parallel streams, only use [SUM] line for aggregate throughput
+                            if self.parallel > 1:
+                                if '[SUM]' in line:
+                                    # Queue just the SUM value directly
+                                    stats = {
+                                        'min': throughput,
+                                        'avg': throughput,
+                                        'max': throughput
+                                    }
+                                    self.throughput_queue.put(stats)
+                            else:
+                                # Single stream: collect values and calculate stats
+                                interval_values.append(throughput)
+                                # Queue stats after collecting the interval value
+                                stats = {
+                                    'min': throughput,
+                                    'avg': throughput,
+                                    'max': throughput
+                                }
+                                self.throughput_queue.put(stats)
 
                 # Wait for process to complete
                 self.process.wait()
