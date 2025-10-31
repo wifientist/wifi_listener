@@ -46,6 +46,11 @@ CREATE TABLE IF NOT EXISTS wifi_samples (
     -- Performance Metrics
     tx_rate_mbps INTEGER,
 
+    -- iperf3 Throughput (captured during this sample interval)
+    iperf3_throughput_min_mbps REAL,
+    iperf3_throughput_avg_mbps REAL,
+    iperf3_throughput_max_mbps REAL,
+
     -- Channel Info
     channel INTEGER,
     channel_width_mhz INTEGER,

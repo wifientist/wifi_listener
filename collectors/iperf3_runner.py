@@ -5,7 +5,9 @@ iperf3 integration for active throughput testing during WiFi monitoring
 import subprocess
 import threading
 import time
-from typing import Optional
+import re
+from typing import Optional, Dict, List
+from queue import Queue
 
 
 class IPerf3Runner:
@@ -33,6 +35,8 @@ class IPerf3Runner:
         self.process = None
         self.thread = None
         self.running = False
+        self.throughput_queue = Queue()  # Queue for passing throughput data to main loop
+        self.current_interval_values = []  # Collect values within current interval
 
     def build_command(self, duration: int = 300) -> list:
         """
@@ -50,6 +54,7 @@ class IPerf3Runner:
             '-p', str(self.port),
             '-t', str(duration),
             '-i', '4',  # Report interval matches WiFi sample interval
+            '--forceflush',  # Force flushing output for real-time parsing
         ]
 
         # Add parallel streams if specified
@@ -67,6 +72,45 @@ class IPerf3Runner:
             cmd.extend(['-b', '1000M'])
 
         return cmd
+
+    def parse_throughput_line(self, line: str) -> Optional[float]:
+        """
+        Parse a single iperf3 output line to extract throughput in Mbps
+
+        Example lines:
+        [  5]   0.00-4.00   sec   450 MBytes   945 Mbits/sec
+        [SUM]   0.00-4.00   sec   1.8 GBytes   3.8 Gbits/sec
+
+        Args:
+            line: Single line from iperf3 output
+
+        Returns:
+            float: Throughput in Mbps, or None if line doesn't contain throughput
+        """
+        # Look for pattern: [ID] time-range sec size Xbits/sec
+        # Match both Mbits/sec and Gbits/sec
+        match = re.search(r'(\d+\.?\d*)\s+(Mbits|Gbits)/sec', line)
+        if match:
+            value = float(match.group(1))
+            unit = match.group(2)
+
+            # Convert Gbits to Mbits
+            if unit == 'Gbits':
+                value *= 1000
+
+            return value
+        return None
+
+    def get_latest_throughput_stats(self) -> Optional[Dict[str, float]]:
+        """
+        Get min/avg/max throughput for the latest completed interval
+
+        Returns:
+            dict: {'min': float, 'avg': float, 'max': float} in Mbps, or None if no data
+        """
+        if not self.throughput_queue.empty():
+            return self.throughput_queue.get()
+        return None
 
     def start(self, duration: int = 300):
         """
@@ -87,26 +131,55 @@ class IPerf3Runner:
                 self.process = subprocess.Popen(
                     cmd,
                     stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True
+                    stderr=subprocess.STDOUT,  # Merge stderr into stdout
+                    text=True,
+                    bufsize=1  # Line buffered
                 )
                 self.running = True
 
+                # Read output line by line in real-time
+                interval_values = []
+                for line in iter(self.process.stdout.readline, ''):
+                    if not line:
+                        break
+
+                    line = line.strip()
+
+                    # Parse throughput from interval reports
+                    throughput = self.parse_throughput_line(line)
+                    if throughput is not None:
+                        interval_values.append(throughput)
+
+                        # Check if this is an interval summary line (contains time range like "0.00-4.00")
+                        # For parallel streams, look for [SUM] line
+                        is_interval_summary = False
+                        if self.parallel > 1:
+                            # With parallel streams, look for [SUM] line
+                            if '[SUM]' in line and re.search(r'\d+\.\d+-\d+\.\d+\s+sec', line):
+                                is_interval_summary = True
+                        else:
+                            # Single stream, any interval line counts
+                            if re.search(r'\d+\.\d+-\d+\.\d+\s+sec', line) and 'sender' not in line.lower() and 'receiver' not in line.lower():
+                                is_interval_summary = True
+
+                        # When we hit an interval summary, calculate stats and queue them
+                        if is_interval_summary and interval_values:
+                            stats = {
+                                'min': min(interval_values),
+                                'avg': sum(interval_values) / len(interval_values),
+                                'max': max(interval_values)
+                            }
+                            self.throughput_queue.put(stats)
+                            interval_values = []  # Reset for next interval
+
                 # Wait for process to complete
-                stdout, stderr = self.process.communicate()
+                self.process.wait()
 
                 # Print final results
                 if self.process.returncode == 0:
                     print("\n[iperf3] Test completed successfully")
-                    # Print last few lines (summary)
-                    lines = stdout.strip().split('\n')
-                    print("\n[iperf3] Results:")
-                    for line in lines[-5:]:
-                        print(f"  {line}")
                 else:
                     print(f"\n[iperf3] Test failed with code {self.process.returncode}")
-                    if stderr:
-                        print(f"[iperf3] Error: {stderr}")
 
             except FileNotFoundError:
                 print("\n[iperf3] ERROR: iperf3 not found. Install with: brew install iperf3")

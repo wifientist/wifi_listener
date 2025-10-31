@@ -156,7 +156,7 @@ class Database:
 
         Args:
             session_id: ID of the session this sample belongs to
-            sample_data: Dictionary of sample metrics
+            sample_data: Dictionary of sample metrics (including optional iperf3 throughput)
 
         Returns:
             int: Sample ID
@@ -170,9 +170,10 @@ class Database:
             INSERT INTO wifi_samples (
                 session_id, timestamp, ssid, bssid,
                 signal_dbm, noise_dbm, snr_db, tx_rate_mbps,
+                iperf3_throughput_min_mbps, iperf3_throughput_avg_mbps, iperf3_throughput_max_mbps,
                 channel, channel_width_mhz, frequency_band,
                 phy_mode, mcs_index, security, country_code
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             session_id,
             sample_data.get('timestamp'),
@@ -182,6 +183,9 @@ class Database:
             sample_data.get('noise_dbm'),
             sample_data.get('snr_db'),
             sample_data.get('tx_rate_mbps'),
+            sample_data.get('iperf3_throughput_min_mbps'),
+            sample_data.get('iperf3_throughput_avg_mbps'),
+            sample_data.get('iperf3_throughput_max_mbps'),
             sample_data.get('channel'),
             sample_data.get('channel_width_mhz'),
             sample_data.get('frequency_band'),
@@ -220,7 +224,7 @@ class Database:
             session_id: Session ID
 
         Returns:
-            dict: Statistics (min/avg/max for key metrics)
+            dict: Statistics (min/avg/max for key metrics including iperf3 throughput)
         """
         cursor = self.conn.cursor()
         cursor.execute("""
@@ -238,6 +242,9 @@ class Database:
                 MIN(tx_rate_mbps) as min_tx_rate,
                 AVG(tx_rate_mbps) as avg_tx_rate,
                 MAX(tx_rate_mbps) as max_tx_rate,
+                MIN(iperf3_throughput_min_mbps) as min_iperf3_throughput,
+                AVG(iperf3_throughput_avg_mbps) as avg_iperf3_throughput,
+                MAX(iperf3_throughput_max_mbps) as max_iperf3_throughput,
                 MIN(mcs_index) as min_mcs,
                 AVG(mcs_index) as avg_mcs,
                 MAX(mcs_index) as max_mcs

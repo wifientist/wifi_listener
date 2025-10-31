@@ -34,6 +34,8 @@ DEFAULT_SESSION_DURATION_MINUTES = float(os.getenv('DEFAULT_DURATION_MINUTES', '
 IPERF3_DEFAULT_SERVER = os.getenv('IPERF3_SERVER', '')
 IPERF3_DEFAULT_PORT = int(os.getenv('IPERF3_PORT', '5201'))
 IPERF3_DEFAULT_PARALLEL = int(os.getenv('IPERF3_PARALLEL', '1'))
+IPERF3_DEFAULT_REVERSE = os.getenv('IPERF3_REVERSE', 'false').lower() in ('true', '1', 'yes')
+IPERF3_DEFAULT_UDP = os.getenv('IPERF3_UDP', 'false').lower() in ('true', '1', 'yes')
 
 # System profiler settings
 SYSTEM_PROFILER_TIMEOUT = 10  # Seconds before timing out

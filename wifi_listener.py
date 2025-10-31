@@ -184,8 +184,11 @@ class WiFiListener:
             self.iperf3_runner.start(duration=duration_seconds)
 
         print("Collecting samples... (press Ctrl+C to stop)")
-        print(f"{'Time':<20} {'Signal':>8} {'Noise':>8} {'SNR':>6} {'TX Rate':>10} {'Channel':>8}")
-        print("-" * 80)
+        if self.iperf3_runner:
+            print(f"{'Time':<20} {'Signal':>8} {'Noise':>8} {'SNR':>6} {'TX Rate':>10} {'iperf3':>12} {'Channel':>8}")
+        else:
+            print(f"{'Time':<20} {'Signal':>8} {'Noise':>8} {'SNR':>6} {'TX Rate':>10} {'Channel':>8}")
+        print("-" * 95 if self.iperf3_runner else "-" * 80)
 
         try:
             while self.running:
@@ -198,6 +201,14 @@ class WiFiListener:
                 sample = self.collector.collect()
 
                 if sample:
+                    # Get iperf3 throughput stats if available
+                    if self.iperf3_runner and self.iperf3_runner.is_running():
+                        throughput_stats = self.iperf3_runner.get_latest_throughput_stats()
+                        if throughput_stats:
+                            sample['iperf3_throughput_min_mbps'] = throughput_stats['min']
+                            sample['iperf3_throughput_avg_mbps'] = throughput_stats['avg']
+                            sample['iperf3_throughput_max_mbps'] = throughput_stats['max']
+
                     # Store in database
                     with Database(config.DB_PATH) as db:
                         db.insert_sample(self.current_session_id, sample)
@@ -212,7 +223,12 @@ class WiFiListener:
                     tx_rate = sample.get('tx_rate_mbps', 'N/A')
                     channel = sample.get('channel', 'N/A')
 
-                    print(f"{timestamp:<20} {signal_dbm:>8} {noise_dbm:>8} {snr_db:>6} {tx_rate:>10} {channel:>8}")
+                    if self.iperf3_runner:
+                        iperf3_avg = sample.get('iperf3_throughput_avg_mbps')
+                        iperf3_str = f"{iperf3_avg:.0f}" if iperf3_avg else "-"
+                        print(f"{timestamp:<20} {signal_dbm:>8} {noise_dbm:>8} {snr_db:>6} {tx_rate:>10} {iperf3_str:>12} {channel:>8}")
+                    else:
+                        print(f"{timestamp:<20} {signal_dbm:>8} {noise_dbm:>8} {snr_db:>6} {tx_rate:>10} {channel:>8}")
 
                 else:
                     print(f"{datetime.now().strftime('%H:%M:%S'):<20} WiFi disconnected!")
@@ -383,6 +399,10 @@ class WiFiListener:
             ('MCS Index', 'mcs', ''),
         ]
 
+        # Add iperf3 throughput if data is available
+        if session.get('iperf3_enabled') and stats.get('avg_iperf3_throughput') is not None:
+            metrics.append(('iperf3 Throughput', 'iperf3_throughput', 'Mbps'))
+
         for label, key, unit in metrics:
             min_val = stats.get(f'min_{key}')
             avg_val = stats.get(f'avg_{key}')
@@ -426,7 +446,8 @@ class WiFiListener:
         # Write CSV
         fieldnames = [
             'timestamp', 'ssid', 'signal_dbm', 'noise_dbm', 'snr_db',
-            'tx_rate_mbps', 'channel', 'channel_width_mhz', 'frequency_band',
+            'tx_rate_mbps', 'iperf3_throughput_min_mbps', 'iperf3_throughput_avg_mbps',
+            'iperf3_throughput_max_mbps', 'channel', 'channel_width_mhz', 'frequency_band',
             'phy_mode', 'mcs_index', 'security'
         ]
 
@@ -730,6 +751,10 @@ Examples:
         iperf3_port = args.iperf3_port if args.iperf3_port is not None else config.IPERF3_DEFAULT_PORT
         iperf3_parallel = args.iperf3_parallel if args.iperf3_parallel is not None else config.IPERF3_DEFAULT_PARALLEL
 
+        # For reverse and udp, check if explicitly set via CLI, otherwise use .env defaults
+        iperf3_reverse = args.iperf3_reverse if args.iperf3_reverse else config.IPERF3_DEFAULT_REVERSE
+        iperf3_udp = args.iperf3_udp if args.iperf3_udp else config.IPERF3_DEFAULT_UDP
+
         # If --iperf3 flag used, enable with .env defaults
         if args.iperf3:
             if not iperf3_server:  # No explicit --iperf3-server
@@ -749,8 +774,8 @@ Examples:
             iperf3_server=iperf3_server,
             iperf3_port=iperf3_port,
             iperf3_parallel=iperf3_parallel,
-            iperf3_reverse=args.iperf3_reverse,
-            iperf3_udp=args.iperf3_udp
+            iperf3_reverse=iperf3_reverse,
+            iperf3_udp=iperf3_udp
         )
 
     elif args.command == 'stop':
