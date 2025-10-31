@@ -631,11 +631,14 @@ Examples:
   # 5-minute passive test
   start -l "Kitchen - 20ft" -a "R770" -d 5
 
-  # Upload test with 4 parallel streams
+  # Upload test using .env defaults
+  start -l "Kitchen" -a "R770" -d 5 --iperf3
+
+  # Upload test with explicit server and streams
   start -l "Kitchen" -a "R770" -d 5 --iperf3-server 192.168.1.100 -P 4
 
-  # Download test (reverse mode)
-  start -l "Kitchen" -a "R770" -d 5 --iperf3-server 192.168.1.100 -P 4 -R
+  # Download test using .env server, override parallel streams
+  start -l "Kitchen" -a "R770" -d 5 --iperf3 -P 8 -R
     """
     start_parser = subparsers.add_parser('start',
                                          help='Start a monitoring session',
@@ -655,19 +658,23 @@ Examples:
 
     # iperf3 options
     iperf3_group = start_parser.add_argument_group('iperf3 options (active throughput testing)')
+    iperf3_group.add_argument('--iperf3',
+                             action='store_true',
+                             help='Enable iperf3 using .env defaults (requires IPERF3_SERVER in .env)')
     iperf3_group.add_argument('--iperf3-server',
+                             default=None,
                              metavar='IP',
-                             help='iperf3 server IP/hostname (required to enable iperf3)')
+                             help='iperf3 server IP/hostname (overrides .env IPERF3_SERVER)')
     iperf3_group.add_argument('--iperf3-port',
                              type=int,
-                             default=5201,
+                             default=None,
                              metavar='PORT',
-                             help='iperf3 server port (default: %(default)s)')
+                             help='iperf3 server port (overrides .env, default: 5201)')
     iperf3_group.add_argument('--iperf3-parallel', '-P',
                              type=int,
-                             default=1,
+                             default=None,
                              metavar='N',
-                             help='Number of parallel streams (default: %(default)s, recommended: 4)')
+                             help='Number of parallel streams (overrides .env, recommended: 4)')
     iperf3_group.add_argument('--iperf3-reverse', '-R',
                              action='store_true',
                              help='Reverse mode: download test (server → client)')
@@ -717,14 +724,31 @@ Examples:
     app = WiFiListener()
 
     if args.command == 'start':
+        # Handle iperf3 flag logic
+        # Priority: CLI args > --iperf3 flag > .env defaults
+        iperf3_server = args.iperf3_server
+        iperf3_port = args.iperf3_port if args.iperf3_port is not None else config.IPERF3_DEFAULT_PORT
+        iperf3_parallel = args.iperf3_parallel if args.iperf3_parallel is not None else config.IPERF3_DEFAULT_PARALLEL
+
+        # If --iperf3 flag used, enable with .env defaults
+        if args.iperf3:
+            if not iperf3_server:  # No explicit --iperf3-server
+                iperf3_server = config.IPERF3_DEFAULT_SERVER
+                if not iperf3_server:
+                    print("ERROR: --iperf3 requires IPERF3_SERVER to be set in .env file")
+                    print("Either:")
+                    print("  1. Set IPERF3_SERVER in .env, or")
+                    print("  2. Use --iperf3-server IP instead of --iperf3")
+                    sys.exit(1)
+
         app.start_session(
             location=args.location,
             ap_name=args.ap_name,
             notes=args.notes,
             duration_minutes=args.duration,
-            iperf3_server=args.iperf3_server,
-            iperf3_port=args.iperf3_port,
-            iperf3_parallel=args.iperf3_parallel,
+            iperf3_server=iperf3_server,
+            iperf3_port=iperf3_port,
+            iperf3_parallel=iperf3_parallel,
             iperf3_reverse=args.iperf3_reverse,
             iperf3_udp=args.iperf3_udp
         )
