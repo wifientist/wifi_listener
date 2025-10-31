@@ -579,35 +579,100 @@ class WiFiListener:
 
 def main():
     """Main entry point"""
+    epilog_text = """
+Examples:
+  # Passive monitoring (no iperf3)
+  %(prog)s start -l "Kitchen - 20ft" -a "R770" -d 5
+
+  # Upload test with iperf3 (4 parallel streams)
+  %(prog)s start -l "Kitchen - 20ft" -a "R770" -d 5 \\
+    --iperf3-server 192.168.1.100 -P 4
+
+  # Download test (reverse mode)
+  %(prog)s start -l "Kitchen - 20ft" -a "R770" -d 5 \\
+    --iperf3-server 192.168.1.100 -P 4 -R
+
+  # List all sessions
+  %(prog)s list
+
+  # View session statistics
+  %(prog)s stats 1
+
+  # Export to CSV
+  %(prog)s export 1
+
+  # Export to InfluxDB format
+  %(prog)s influx 1
+
+  # Compare multiple sessions
+  %(prog)s compare 1 2 3
+
+For iperf3 setup: See IPERF3_QUICKSTART.md
+For Grafana setup: See GRAFANA_SETUP.md
+    """
+
     parser = argparse.ArgumentParser(
         description='WiFi Listener - Rate@Range Testing Tool',
+        epilog=epilog_text,
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
 
     subparsers = parser.add_subparsers(dest='command', help='Commands')
 
     # Start command
-    start_parser = subparsers.add_parser('start', help='Start a monitoring session')
+    start_help = """
+Start a WiFi monitoring session.
+
+Basic Usage:
+  Passive monitoring: -l LOCATION -a AP_NAME -d MINUTES
+  With iperf3: Add --iperf3-server IP and optional -P, -R, -u flags
+
+Examples:
+  # 5-minute passive test
+  start -l "Kitchen - 20ft" -a "R770" -d 5
+
+  # Upload test with 4 parallel streams
+  start -l "Kitchen" -a "R770" -d 5 --iperf3-server 192.168.1.100 -P 4
+
+  # Download test (reverse mode)
+  start -l "Kitchen" -a "R770" -d 5 --iperf3-server 192.168.1.100 -P 4 -R
+    """
+    start_parser = subparsers.add_parser('start',
+                                         help='Start a monitoring session',
+                                         description=start_help,
+                                         formatter_class=argparse.RawDescriptionHelpFormatter)
+
+    # Basic options
     start_parser.add_argument('--location', '-l', required=True,
                              help='Test location (e.g., "Kitchen - 20ft")')
     start_parser.add_argument('--ap-name', '-a',
-                             help='Access point name/identifier')
+                             help='Access point name/identifier (e.g., "R770", "AP1")')
     start_parser.add_argument('--notes', '-n',
                              help='Optional notes about this test')
     start_parser.add_argument('--duration', '-d', type=float,
                              default=config.DEFAULT_SESSION_DURATION_MINUTES,
-                             help='Auto-stop after N minutes (0 = manual stop)')
+                             help='Auto-stop after N minutes (default: %(default)s, 0 = manual stop)')
 
     # iperf3 options
-    start_parser.add_argument('--iperf3-server',
-                             help='iperf3 server IP/hostname (enables active throughput testing)')
-    start_parser.add_argument('--iperf3-port', type=int, default=5201,
-                             help='iperf3 server port (default: 5201)')
-    start_parser.add_argument('--iperf3-parallel', '-P', type=int, default=1,
-                             help='Number of parallel iperf3 streams (default: 1, recommended: 4)')
-    start_parser.add_argument('--iperf3-reverse', '-R', action='store_true',
-                             help='Reverse mode: server sends to client (download test)')
-    start_parser.add_argument('--iperf3-udp', '-u', action='store_true',
+    iperf3_group = start_parser.add_argument_group('iperf3 options (active throughput testing)')
+    iperf3_group.add_argument('--iperf3-server',
+                             metavar='IP',
+                             help='iperf3 server IP/hostname (required to enable iperf3)')
+    iperf3_group.add_argument('--iperf3-port',
+                             type=int,
+                             default=5201,
+                             metavar='PORT',
+                             help='iperf3 server port (default: %(default)s)')
+    iperf3_group.add_argument('--iperf3-parallel', '-P',
+                             type=int,
+                             default=1,
+                             metavar='N',
+                             help='Number of parallel streams (default: %(default)s, recommended: 4)')
+    iperf3_group.add_argument('--iperf3-reverse', '-R',
+                             action='store_true',
+                             help='Reverse mode: download test (server → client)')
+    iperf3_group.add_argument('--iperf3-udp', '-u',
+                             action='store_true',
                              help='Use UDP instead of TCP')
 
     # Stop command
