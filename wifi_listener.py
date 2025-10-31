@@ -18,6 +18,7 @@ import config
 from db import Database, init_database
 from collectors import SystemProfilerCollector
 from collectors.iperf3_runner import IPerf3Runner
+from utils.mac_vendor import lookup_vendor
 from exporters import InfluxDBExporter
 
 
@@ -122,6 +123,12 @@ class WiFiListener:
         if ap_name:
             print(f"AP Name: {ap_name}")
         print(f"Connected to: {initial_sample['ssid']}")
+        if initial_sample.get('bssid'):
+            print(f"BSSID: {initial_sample['bssid']}")
+        if initial_sample.get('phy_mode'):
+            print(f"PHY Mode: {initial_sample['phy_mode']}")
+        if initial_sample.get('channel') and initial_sample.get('channel_width_mhz'):
+            print(f"Channel: {initial_sample['channel']} ({initial_sample['channel_width_mhz']} MHz, {initial_sample.get('frequency_band', 'N/A')})")
         print(f"Sample Interval: {config.SAMPLE_INTERVAL_SECONDS} seconds")
         if duration_minutes > 0:
             print(f"Duration: {duration_minutes} minutes (auto-stop)")
@@ -185,10 +192,10 @@ class WiFiListener:
 
         print("Collecting samples... (press Ctrl+C to stop)")
         if self.iperf3_runner:
-            print(f"{'Time':<20} {'Signal':>8} {'Noise':>8} {'SNR':>6} {'TX Rate':>10} {'iperf3':>12} {'Channel':>8}")
+            print(f"{'Time':<20} {'Signal':>8} {'Noise':>8} {'SNR':>6} {'TX Rate':>10} {'iperf3':>12} {'Channel':>15} {'PHY':>10}")
         else:
-            print(f"{'Time':<20} {'Signal':>8} {'Noise':>8} {'SNR':>6} {'TX Rate':>10} {'Channel':>8}")
-        print("-" * 95 if self.iperf3_runner else "-" * 80)
+            print(f"{'Time':<20} {'Signal':>8} {'Noise':>8} {'SNR':>6} {'TX Rate':>10} {'Channel':>15} {'PHY':>10}")
+        print("-" * 120 if self.iperf3_runner else "-" * 105)
 
         try:
             while self.running:
@@ -221,14 +228,36 @@ class WiFiListener:
                     noise_dbm = sample.get('noise_dbm', 'N/A')
                     snr_db = sample.get('snr_db', 'N/A')
                     tx_rate = sample.get('tx_rate_mbps', 'N/A')
+
+                    # Format channel with width
                     channel = sample.get('channel', 'N/A')
+                    channel_width = sample.get('channel_width_mhz', '')
+                    if channel != 'N/A' and channel_width:
+                        channel_str = f"{channel} ({channel_width}MHz)"
+                    else:
+                        channel_str = str(channel)
+
+                    # Format PHY mode (shorten for display)
+                    phy_mode = sample.get('phy_mode', 'N/A')
+                    if phy_mode and phy_mode != 'N/A':
+                        # Convert "802.11ax" to "ax" or "WiFi 6"
+                        if 'ax' in phy_mode:
+                            phy_str = "ax (WiFi6)"
+                        elif 'ac' in phy_mode:
+                            phy_str = "ac (WiFi5)"
+                        elif 'n' in phy_mode:
+                            phy_str = "n (WiFi4)"
+                        else:
+                            phy_str = phy_mode.replace('802.11', '')
+                    else:
+                        phy_str = 'N/A'
 
                     if self.iperf3_runner:
                         iperf3_avg = sample.get('iperf3_throughput_avg_mbps')
                         iperf3_str = f"{iperf3_avg:.0f}" if iperf3_avg else "-"
-                        print(f"{timestamp:<20} {signal_dbm:>8} {noise_dbm:>8} {snr_db:>6} {tx_rate:>10} {iperf3_str:>12} {channel:>8}")
+                        print(f"{timestamp:<20} {signal_dbm:>8} {noise_dbm:>8} {snr_db:>6} {tx_rate:>10} {iperf3_str:>12} {channel_str:>15} {phy_str:>10}")
                     else:
-                        print(f"{timestamp:<20} {signal_dbm:>8} {noise_dbm:>8} {snr_db:>6} {tx_rate:>10} {channel:>8}")
+                        print(f"{timestamp:<20} {signal_dbm:>8} {noise_dbm:>8} {snr_db:>6} {tx_rate:>10} {channel_str:>15} {phy_str:>10}")
 
                 else:
                     print(f"{datetime.now().strftime('%H:%M:%S'):<20} WiFi disconnected!")
@@ -363,6 +392,10 @@ class WiFiListener:
                 print(f"ERROR: No samples found for session {session_id}")
                 return
 
+            # Get first sample for connection details (SSID, BSSID, PHY mode, etc.)
+            samples = db.get_session_samples(session_id)
+            first_sample = samples[0] if samples else {}
+
         print("\n" + "=" * 80)
         print(f"Session Statistics - ID {session_id}")
         print("=" * 80)
@@ -372,6 +405,27 @@ class WiFiListener:
         print(f"Start Time: {session['start_time']}")
         print(f"End Time: {session['end_time'] or 'In Progress'}")
         print(f"Sample Count: {stats['sample_count']}")
+
+        # Show connection details from first sample
+        if first_sample:
+            if first_sample.get('ssid'):
+                print(f"\nConnection Details:")
+                print(f"  SSID: {first_sample['ssid']}")
+            if first_sample.get('bssid'):
+                bssid = first_sample['bssid']
+                vendor = lookup_vendor(bssid)
+                if vendor != "Unknown":
+                    print(f"  BSSID: {bssid} ({vendor})")
+                else:
+                    print(f"  BSSID: {bssid}")
+            if first_sample.get('phy_mode'):
+                print(f"  PHY Mode: {first_sample['phy_mode']}")
+            if first_sample.get('channel') and first_sample.get('channel_width_mhz'):
+                print(f"  Channel: {first_sample['channel']} ({first_sample['channel_width_mhz']} MHz, {first_sample.get('frequency_band', 'N/A')})")
+            if first_sample.get('security'):
+                print(f"  Security: {first_sample['security']}")
+            if first_sample.get('country_code'):
+                print(f"  Country Code: {first_sample['country_code']}")
 
         # Show iperf3 configuration if enabled
         if session.get('iperf3_enabled'):
@@ -597,6 +651,51 @@ class WiFiListener:
 
         print("\n" + "=" * 120)
 
+    def delete_session(self, session_id: int, force: bool = False):
+        """
+        Delete a session and all its data
+
+        Args:
+            session_id: Session ID to delete
+            force: Skip confirmation prompt if True
+        """
+        init_database(config.DB_PATH)
+
+        with Database(config.DB_PATH) as db:
+            # Get session info for confirmation
+            session = db.get_session(session_id)
+            if not session:
+                print(f"ERROR: Session {session_id} not found")
+                return
+
+            sample_count = db.get_sample_count(session_id)
+
+            # Show session info
+            print("\n" + "=" * 80)
+            print(f"Session {session_id} - Delete Confirmation")
+            print("=" * 80)
+            print(f"Location: {session['location']}")
+            if session['ap_name']:
+                print(f"AP Name: {session['ap_name']}")
+            print(f"Start Time: {session['start_time']}")
+            print(f"Samples: {sample_count}")
+            print()
+
+            # Confirm deletion unless --force flag is used
+            if not force:
+                response = input("Are you sure you want to delete this session? (yes/no): ")
+                if response.lower() not in ['yes', 'y']:
+                    print("Deletion cancelled.")
+                    return
+
+            # Delete the session
+            success = db.delete_session(session_id)
+
+            if success:
+                print(f"\n✓ Session {session_id} and {sample_count} samples deleted successfully.")
+            else:
+                print(f"\n✗ Failed to delete session {session_id}")
+
 
 def main():
     """Main entry point"""
@@ -621,6 +720,12 @@ Examples:
 
   # Export to CSV
   %(prog)s export 1
+
+  # Delete a session
+  %(prog)s delete 5
+
+  # Delete without confirmation
+  %(prog)s delete 5 --force
 
   # Export to InfluxDB format
   %(prog)s influx 1
@@ -739,6 +844,13 @@ Examples:
     compare_parser.add_argument('session_ids', type=int, nargs='+',
                                help='Session IDs to compare (space-separated)')
 
+    # Delete command
+    delete_parser = subparsers.add_parser('delete', help='Delete a session and all its data')
+    delete_parser.add_argument('session_id', type=int,
+                              help='Session ID to delete')
+    delete_parser.add_argument('--force', '-f', action='store_true',
+                              help='Skip confirmation prompt')
+
     args = parser.parse_args()
 
     # Create app instance
@@ -795,6 +907,9 @@ Examples:
 
     elif args.command == 'compare':
         app.compare_sessions(args.session_ids)
+
+    elif args.command == 'delete':
+        app.delete_session(args.session_id, args.force)
 
     else:
         parser.print_help()

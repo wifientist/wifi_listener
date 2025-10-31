@@ -148,6 +148,32 @@ class Database:
         """, (limit,))
         return [dict(row) for row in cursor.fetchall()]
 
+    def delete_session(self, session_id: int) -> bool:
+        """
+        Delete a session and all its samples
+
+        Args:
+            session_id: Session ID to delete
+
+        Returns:
+            bool: True if deleted, False if session not found
+        """
+        cursor = self.conn.cursor()
+
+        # Check if session exists
+        cursor.execute("SELECT id FROM sessions WHERE id = ?", (session_id,))
+        if not cursor.fetchone():
+            return False
+
+        # Delete samples first (foreign key constraint)
+        cursor.execute("DELETE FROM wifi_samples WHERE session_id = ?", (session_id,))
+
+        # Delete session
+        cursor.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+
+        self.conn.commit()
+        return True
+
     # ==================== SAMPLE OPERATIONS ====================
 
     def insert_sample(self, session_id: int, sample_data: Dict[str, Any]) -> int:
