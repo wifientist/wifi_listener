@@ -49,20 +49,39 @@ class WDUtilCollector:
         """
         Collect current WiFi metrics
 
+        Merges wdutil data (CCA, NSS, Guard Interval, BSSID when available)
+        with system_profiler data (reliable SSID, all other metrics).
+
         Returns:
             dict: WiFi metrics or None if not connected/error
         """
+        # Always get system_profiler data as baseline
+        from collectors.system_profiler import SystemProfilerCollector
+        sp_collector = SystemProfilerCollector(timeout=self.timeout)
+        data = sp_collector.collect()
+
+        if not data:
+            return None
+
+        # If wdutil is available, augment with additional metrics
         if self.use_wdutil:
             raw_output = self._run_wdutil()
             if raw_output:
-                data = self._parse_wdutil(raw_output)
-                if data:
-                    return data
+                wdutil_data = self._parse_wdutil(raw_output)
+                if wdutil_data:
+                    # Merge wdutil-specific fields into system_profiler data
+                    # Only add fields that wdutil provides uniquely
+                    if 'cca_percent' in wdutil_data:
+                        data['cca_percent'] = wdutil_data['cca_percent']
+                    if 'nss' in wdutil_data:
+                        data['nss'] = wdutil_data['nss']
+                    if 'guard_interval' in wdutil_data:
+                        data['guard_interval'] = wdutil_data['guard_interval']
+                    # Use wdutil BSSID if available and not redacted
+                    if 'bssid' in wdutil_data and wdutil_data['bssid'] != '<redacted>':
+                        data['bssid'] = wdutil_data['bssid']
 
-        # Fallback to system_profiler
-        from collectors.system_profiler import SystemProfilerCollector
-        fallback = SystemProfilerCollector(timeout=self.timeout)
-        return fallback.collect()
+        return data
 
     def _run_wdutil(self) -> Optional[str]:
         """
