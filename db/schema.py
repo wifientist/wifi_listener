@@ -59,6 +59,11 @@ CREATE TABLE IF NOT EXISTS wifi_samples (
     -- Protocol Info
     phy_mode TEXT,
     mcs_index INTEGER,
+    nss INTEGER,                    -- Number of Spatial Streams (MIMO streams)
+    guard_interval INTEGER,         -- Guard Interval in nanoseconds (800 or 3200)
+
+    -- Channel Utilization
+    cca_percent INTEGER,            -- Channel Clear Assessment (% channel busy)
 
     -- Additional
     security TEXT,

@@ -198,8 +198,9 @@ class Database:
                 signal_dbm, noise_dbm, snr_db, tx_rate_mbps,
                 iperf3_throughput_min_mbps, iperf3_throughput_avg_mbps, iperf3_throughput_max_mbps,
                 channel, channel_width_mhz, frequency_band,
-                phy_mode, mcs_index, security, country_code
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                phy_mode, mcs_index, nss, guard_interval, cca_percent,
+                security, country_code
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             session_id,
             sample_data.get('timestamp'),
@@ -217,6 +218,9 @@ class Database:
             sample_data.get('frequency_band'),
             sample_data.get('phy_mode'),
             sample_data.get('mcs_index'),
+            sample_data.get('nss'),
+            sample_data.get('guard_interval'),
+            sample_data.get('cca_percent'),
             sample_data.get('security'),
             sample_data.get('country_code')
         ))

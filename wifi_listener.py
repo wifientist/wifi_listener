@@ -16,7 +16,7 @@ from datetime import datetime, timedelta
 
 import config
 from db import Database, init_database
-from collectors import SystemProfilerCollector
+from collectors.wdutil_collector import WDUtilCollector
 from collectors.iperf3_runner import IPerf3Runner
 from utils.mac_vendor import lookup_vendor
 from exporters import InfluxDBExporter
@@ -26,7 +26,8 @@ class WiFiListener:
     """Main application class for WiFi monitoring"""
 
     def __init__(self):
-        self.collector = SystemProfilerCollector(timeout=config.SYSTEM_PROFILER_TIMEOUT)
+        # Try wdutil first (requires sudo), fallback to system_profiler
+        self.collector = WDUtilCollector(timeout=config.SYSTEM_PROFILER_TIMEOUT)
         self.iperf3_runner = None
         self.db = None
         self.running = False
@@ -422,6 +423,17 @@ class WiFiListener:
                 print(f"  PHY Mode: {first_sample['phy_mode']}")
             if first_sample.get('channel') and first_sample.get('channel_width_mhz'):
                 print(f"  Channel: {first_sample['channel']} ({first_sample['channel_width_mhz']} MHz, {first_sample.get('frequency_band', 'N/A')})")
+            if first_sample.get('nss'):
+                nss = first_sample['nss']
+                print(f"  Spatial Streams: {nss}x{nss} MIMO")
+            if first_sample.get('guard_interval'):
+                gi = first_sample['guard_interval']
+                gi_type = "Short" if gi == 800 else "Long" if gi == 3200 else "Unknown"
+                print(f"  Guard Interval: {gi}ns ({gi_type})")
+            if first_sample.get('cca_percent') is not None:
+                cca = first_sample['cca_percent']
+                quality = "Excellent" if cca < 20 else "Good" if cca < 40 else "Fair" if cca < 70 else "Poor"
+                print(f"  Channel Utilization: {cca}% ({quality})")
             if first_sample.get('security'):
                 print(f"  Security: {first_sample['security']}")
             if first_sample.get('country_code'):
